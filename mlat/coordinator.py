@@ -135,7 +135,7 @@ class Receiver(object):
             self.recent_pair_jumps = 0
             self.clock_reset('sync detected clock jump')
             if self.focus:
-                glogger.warning("{r}: detected clockjump, bad_syncs: {b}".format(r=self.user, b=round(self.bad_syncs, 1)))
+                glogger.warning("{r}: detected clockjump, bad_syncs: {b}".format(r=self.uuid, b=round(self.bad_syncs, 1)))
             self.bad_syncs += 0.1
 
     def clock_reset(self, reason):
@@ -146,7 +146,7 @@ class Receiver(object):
         if self.focus:
             if not reason:
                 reason = ''
-            glogger.warning("Clock reset: {r} count: {c} reason: {s}".format(r=self.user, c=self.clock_reset_counter, s=reason))
+            glogger.warning("Clock reset: {r} count: {c} reason: {s}".format(r=self.uuid, c=self.clock_reset_counter, s=reason))
 
     @profile.trackcpu
     def refresh_traffic_requests(self):
@@ -157,11 +157,11 @@ class Receiver(object):
         return self.uid < other.uid
 
     def __str__(self):
-        return self.user
+        return self.uuid
 
     def __repr__(self):
         return 'Receiver({0!r},{0!r},{1!r})@{2}'.format(self.uid,
-                                                        self.user,
+                                                        self.uuid,
                                                         self.connection,
                                                         id(self))
 
@@ -184,7 +184,7 @@ class Coordinator(object):
         self.uidCounter = 0
         # receivers:
         self.receivers = {} # keyed by uid
-        self.usernames = {} # keyed by usernames
+        self.usernames = {} # keyed by uuid
 
         self.sighup_handlers = []
         self.authenticator = authenticator
@@ -352,7 +352,7 @@ class Coordinator(object):
             # 6: time since last pairing update
             # 7: how many synced peers does the peer have
 
-            peers = receiver_states.get(r.user, {})
+            peers = receiver_states.get(r.uuid, {})
             bad_peer_list = []
             sum_outlier_percent = 0
             for username, state in peers.items():
@@ -397,7 +397,7 @@ class Coordinator(object):
 
             if r.focus:
                 glogger.warning("{u}: bad_syncs: {bs:0.1f} outlier percent: {pe:0.1f} bad peers: {bp} ratio: {r} list: {l}".format(
-                    u=r.user, bs=r.bad_syncs, pe=r.outlier_percent_rolling,
+                    u=r.uuid, bs=r.bad_syncs, pe=r.outlier_percent_rolling,
                     bp=bad_peers, r=round(bad_peers/num_peers, 2), l=str(bad_peer_list)))
 
 
@@ -408,16 +408,16 @@ class Coordinator(object):
             r.num_syncs *= 0.25
 
             # r.mapLat / r.mapLon is a fudged position for privacy
-            sync[r.user] = {
-                'peers': receiver_states.get(r.user, {}),
+            sync[r.uuid] = {
+                'peers': receiver_states.get(r.uuid, {}),
                 'bad_syncs': r.bad_syncs,
                 'lat': r.mapLat,
                 'lon': r.mapLon
             }
 
-            r.peer_count = len(sync[r.user]['peers'])
+            r.peer_count = len(sync[r.uuid]['peers'])
 
-            clients[r.user] = {
+            clients[r.uuid] = {
                 'user': r.user,
                 'uid': r.uid,
                 'uuid': r.uuid,
@@ -575,8 +575,8 @@ class Coordinator(object):
 
         May raise ValueError to disallow this receiver."""
 
-        if user in self.usernames:
-            raise ValueError('User {user} is already connected'.format(user=user))
+        if uuid in self.usernames:
+            raise ValueError('User {uuid} is already connected'.format(uuid=uuid))
 
         if self.uidCounter > 4611686018427387904:
             self.uidCounter = 0
@@ -599,7 +599,7 @@ class Coordinator(object):
         self._compute_interstation_distances(receiver)
 
         self.receivers[receiver.uid] = receiver
-        self.usernames[receiver.user] = receiver
+        self.usernames[receiver.uuid] = receiver
         if receiver.user.startswith(config.DEBUG_FOCUS):
             receiver.focus = True
         return receiver
@@ -647,7 +647,7 @@ class Coordinator(object):
         self.tracker.remove_all(receiver)
         self.clock_tracker.receiver_disconnect(receiver)
         self.receivers.pop(receiver.uid)
-        self.usernames.pop(receiver.user)
+        self.usernames.pop(receiver.uuid)
 
         # clean up old distance entries
         for other_receiver in self.receivers.values():
@@ -692,5 +692,5 @@ class Coordinator(object):
                                                          ecef, ecef_cov, receivers, distinct,
                                                          dof, kalman_state, result_new_old)
             except Exception:
-                glogger.exception("Failed to forward result to receiver {r}".format(r=receiver.user))
+                glogger.exception("Failed to forward result to receiver {r}".format(r=receiver.uuid))
                 # eat the exception so it doesn't break our caller

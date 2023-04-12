@@ -343,9 +343,6 @@ class JsonClient(connection.Connection):
                 user = str(hs['user'])
                 uuid = str(hs.get('uuid'))
 
-                if not uuid and user:
-                    uuid = user
-
                 # replace bad characters with an underscore
                 user = re.sub("[^A-Za-z0-9_.-]", r'_', user)
                 # limit to 40 chars

@@ -575,8 +575,8 @@ class Coordinator(object):
 
         May raise ValueError to disallow this receiver."""
 
-        if user in self.usernames:
-            raise ValueError('User {user} is already connected'.format(user=user))
+        if uuid in self.usernames:
+            raise ValueError('User {user} is already connected'.format(user=uuid))
 
         if self.uidCounter > 4611686018427387904:
             self.uidCounter = 0
@@ -599,7 +599,7 @@ class Coordinator(object):
         self._compute_interstation_distances(receiver)
 
         self.receivers[receiver.uid] = receiver
-        self.usernames[receiver.user] = receiver
+        self.usernames[receiver.uuid] = receiver
         if receiver.user.startswith(config.DEBUG_FOCUS):
             receiver.focus = True
         return receiver

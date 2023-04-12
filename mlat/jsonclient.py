@@ -341,7 +341,7 @@ class JsonClient(connection.Connection):
                     raise ValueError('Unsupported version in handshake')
 
                 user = str(hs['user'])
-                uuid = hs.get('uuid')
+                uuid = str(hs.get('uuid'))
 
                 # replace bad characters with an underscore
                 user = re.sub("[^A-Za-z0-9_.-]", r'_', user)

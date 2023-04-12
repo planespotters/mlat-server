@@ -317,7 +317,7 @@ class MlatTracker(object):
                 else:
                     # this result is suspect
                     var_est = max_error * max_error
-                    #glogger.warn('{a:06X} {e:7.3f} '.format(a=decoded.address, e=999.999) + str([line[0].user for line in cluster]))
+                    #glogger.warn('{a:06X} {e:7.3f} '.format(a=decoded.address, e=999.999) + str([line[0].uuid for line in cluster]))
                     # don't use this
                     continue
 
@@ -326,7 +326,7 @@ class MlatTracker(object):
                 if False and elapsed > 30 and error < 1e9:
                     lat, lon, alt = geodesy.ecef2llh(ecef)
                     ecef, ecef_cov = r
-                    glogger.warn('{a:06X} {e:8.1f} {lat:7.3f},{lon:7.3f},{alt:5.0f} '.format(a=decoded.address, e=error/1000, lat=lat, lon=lon, alt=alt) + str([line[0].user for line in cluster]))
+                    glogger.warn('{a:06X} {e:8.1f} {lat:7.3f},{lon:7.3f},{alt:5.0f} '.format(a=decoded.address, e=error/1000, lat=lat, lon=lon, alt=alt) + str([line[0].uuid for line in cluster]))
 
                 if error > max_error:
                     continue
@@ -445,7 +445,7 @@ def _cluster_timestamps(component, min_receivers):
     flat_component = []
     for receiver, (variance, timestamps) in component.items():
         for timestamp, utc in timestamps:
-            #glogger.info("  {r} {t:.1f}us {e:.1f}us".format(r=receiver.user, t=timestamp*1e6, e=error*1e6))
+            #glogger.info("  {r} {t:.1f}us {e:.1f}us".format(r=receiver.uuid, t=timestamp*1e6, e=error*1e6))
             flat_component.append((receiver, timestamp, variance, utc))
 
     # sort by timestamp
@@ -472,7 +472,7 @@ def _cluster_timestamps(component, min_receivers):
     for group in groups:
         #glogger.info(" group:")
         #for r, t, e in group:
-        #    glogger.info("  {r} {t:.1f}us {e:.1f}us".format(r=r.user, t=t*1e6, e=e*1e6))
+        #    glogger.info("  {r} {t:.1f}us {e:.1f}us".format(r=r.uuid, t=t*1e6, e=e*1e6))
 
         while len(group) >= min_receivers:
             receiver, timestamp, variance, utc = group.pop()
@@ -482,11 +482,11 @@ def _cluster_timestamps(component, min_receivers):
             first_seen = utc
 
             #glogger.info("forming cluster from group:")
-            #glogger.info("  0 = {r} {t:.1f}us".format(r=head[0].user, t=head[1]*1e6))
+            #glogger.info("  0 = {r} {t:.1f}us".format(r=head[0].uuid, t=head[1]*1e6))
 
             for i in range(len(group) - 1, -1, -1):
                 receiver, timestamp, variance, utc = group[i]
-                #glogger.info("  consider {i} = {r} {t:.1f}us".format(i=i, r=receiver.user, t=timestamp*1e6))
+                #glogger.info("  consider {i} = {r} {t:.1f}us".format(i=i, r=receiver.uuid, t=timestamp*1e6))
                 if (last_timestamp - timestamp) > 2e-3:
                     # Can't possibly be part of the same cluster.
                     #
@@ -519,7 +519,7 @@ def _cluster_timestamps(component, min_receivers):
                         # if receivers are closer than 1km, then
                         # only count them as one receiver for the 3-receiver
                         # requirement
-                        #glogger.info("   not distinct vs receiver {r}".format(r=other_receiver.user))
+                        #glogger.info("   not distinct vs receiver {r}".format(r=other_receiver.uuid))
                         is_distinct = False
 
                     if d < min_d:

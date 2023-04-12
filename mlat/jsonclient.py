@@ -351,8 +351,8 @@ class JsonClient(connection.Connection):
                 if len(user) < 3:
                     user = user + '_' + str(random.randrange(10,99))
 
-                if uuid in self.coordinator.usernames:
-                    existingReceiver = self.coordinator.usernames[uuid]
+                if user in self.coordinator.usernames:
+                    existingReceiver = self.coordinator.usernames[user]
 
                     if uuid and uuid == existingReceiver.uuid:
                         # if we have another user with the same uuid, disconnect the existing user
@@ -477,19 +477,19 @@ class JsonClient(connection.Connection):
 
     def write_raw(self, **kwargs):
         line = ujson.dumps(kwargs)
-        #logging.info("%s <<  %s", self.receiver.uuid, line)
+        #logging.info("%s <<  %s", self.receiver.user, line)
         self.w.write((line + '\n').encode('ascii'))
 
     def write_zlib(self, **kwargs):
         line = ujson.dumps(kwargs)
-        #logging.info("%s <<Z %s", self.receiver.uuid, line)
+        #logging.info("%s <<Z %s", self.receiver.user, line)
         self._writebuf.append(line + '\n')
         if self._pending_flush is None:
             self._pending_flush = self.loop.call_later(1.0, self._flush_zlib)
 
     def discard(self, **kwargs):
         #line = ujson.dumps(kwargs)
-        #logging.info("%s <<D %s", self.receiver.uuid, line)
+        #logging.info("%s <<D %s", self.receiver.user, line)
         pass
 
     def _flush_zlib(self):
@@ -574,7 +574,7 @@ class JsonClient(connection.Connection):
         try:
             msg = ujson.loads(line)
         except ValueError:
-            logging.warn("process_message json ValueError: %s >> %s", self.receiver.uuid, line)
+            logging.warn("process_message json ValueError: %s >> %s", self.receiver.user, line)
 
 
         self.message_counter += 1

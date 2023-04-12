@@ -534,7 +534,7 @@ class ClockTracker(object):
             pairing.update_total /= 2
 
 
-            state.setdefault(r0.uuid, {})[r1.uuid] = [pairing.n,
+            state.setdefault(r0.user, {})[r1.user] = [pairing.n,
                               round(pairing.error * 1e6, 1),
                               round(pairing.drift * 1e6),
                               round(r1.bad_syncs, 2),
@@ -542,7 +542,7 @@ class ClockTracker(object):
                               round(outlier_percent, 1),
                               int(round(now - pairing.updated)),
                               sum(r1.sync_peers)]
-            state.setdefault(r1.uuid, {})[r0.uuid] = [pairing.n,
+            state.setdefault(r1.user, {})[r0.user] = [pairing.n,
                               round(pairing.error * 1e6, 1),
                               round(pairing.i_drift * 1e6),
                               round(r0.bad_syncs, 2),
@@ -1011,7 +1011,7 @@ cdef class ClockPairing(object):
         return self.base_avg + (peer_ts - self.peer_avg) * self.i_factor
 
     def __str__(self):
-        return self.base.uuid + ':' + self.peer.uuid
+        return self.base.user + ':' + self.peer.user
 
 
 

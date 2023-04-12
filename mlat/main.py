@@ -131,8 +131,7 @@ class MlatServer(object):
                             type=hostport,
                             default=[])
 
-        parser.add_argument('--filtered-basestation-listen',
-                            help="listen on a [host:]port and send Basestation-format results to clients that connect.",
+        parser.add_argument('--filtered-basestation-listen', help="listen on a [host:]port and send Basestation-format results to clients that connect.",
                             action='append',
                             type=port_or_hostport,
                             default=[])

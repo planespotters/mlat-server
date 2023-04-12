@@ -359,9 +359,9 @@ class JsonClient(connection.Connection):
                         existingReceiver.connection.close()
                     else:
                         tries = 1000
-                        while tries > 0 and uuid in self.coordinator.usernames:
+                        while tries > 0 and user in self.coordinator.usernames:
                             tries -= 1
-                            uuid = uuid + '_' + str(random.randrange(100,999))
+                            user = user + '_' + str(random.randrange(100,999))
 
 
                 peer_compression_methods = set(hs['compress'])
@@ -407,8 +407,8 @@ class JsonClient(connection.Connection):
 
                 self.use_udp = (self.udp_protocol is not None and hs.get('udp_transport', 0) == 2)
 
-                conn_info = '{uuid} v{v} {clock_type} {cversion} {udp} {compress}'.format(
-                    uuid=uuid,
+                conn_info = '{user} v{v} {clock_type} {cversion} {udp} {compress}'.format(
+                    user=user,
                     v=hs['version'],
                     cversion=hs.get("client_version", "unknown"),
                     udp="udp" if self.use_udp else "tcp",
@@ -416,7 +416,7 @@ class JsonClient(connection.Connection):
                     compress=self.compress)
                 self.receiver = self.coordinator.new_receiver(connection=self,
                                                               uuid=uuid,
-                                                              user=uuid,
+                                                              user=user,
                                                               auth=hs.get('auth'),
                                                               clock_type=clock_type,
                                                               position_llh=(lat, lon, alt),
@@ -472,7 +472,7 @@ class JsonClient(connection.Connection):
         if clock_type != 'dump1090' and clock_type != 'radarcape_gps':
             strange = 'strange clock: '
         self.logger.warning("Handshake successful ({conn_info})".format(conn_info=conn_info))
-        self.logger = util.TaggingLogger(glogger, {'tag': '{uuid}'.format(uuid=uuid)})
+        self.logger = util.TaggingLogger(glogger, {'tag': '{user}'.format(user=user)})
         return True
 
     def write_raw(self, **kwargs):

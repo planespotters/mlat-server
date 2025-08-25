@@ -55,14 +55,35 @@ class MonitoringListener(object):
     # override as needed:
 
     async def _start(self):
-        self.tcp_server = await asyncio.start_server(self.start_client,
-                                                          host=self.host,
-                                                          port=self.port)
+        # Support dual-stack (IPv4 + IPv6) binding
+        if self.host is None or self.host == '' or self.host == '0.0.0.0':
+            # Bind to all interfaces - try dual-stack first, fallback to IPv4 only
+            try:
+                self.tcp_server = await asyncio.start_server(
+                    self.start_client,
+                    host=None,  # None enables dual-stack on most systems
+                    port=self.port,
+                    family=socket.AF_UNSPEC
+                )
+            except (OSError, socket.gaierror):
+                # Fallback to IPv4 only if dual-stack fails
+                self.tcp_server = await asyncio.start_server(
+                    self.start_client,
+                    host='0.0.0.0',
+                    port=self.port
+                )
+        else:
+            # Specific host provided - use as-is
+            self.tcp_server = await asyncio.start_server(
+                self.start_client,
+                host=self.host,
+                port=self.port
+            )
+            
         for s in self.tcp_server.sockets:
             name = s.getsockname()
-            self.logger.warning("{what} listening on {host}:{port} (TCP)".format(host=name[0],
-                                                                              port=name[1],
-                                                                              what=self.description))
+            family = 'IPv6' if s.family == socket.AF_INET6 else 'IPv4'
+            self.logger.warning(f"{self.description} listening on {name[0]}:{name[1]} (TCP/{family})")
 
     def _new_client(self, r, w):
         return self.factory(r, w)

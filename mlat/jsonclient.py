@@ -316,6 +316,9 @@ class JsonClient(connection.Connection):
         except asyncio.IncompleteReadError:
             self.logger.info('Client EOF')
 
+        except asyncio.TimeoutError:
+            self.logger.info('Client handshake timeout')
+
         except asyncio.CancelledError:
             pass
 

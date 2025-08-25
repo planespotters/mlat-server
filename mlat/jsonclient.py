@@ -495,6 +495,11 @@ class JsonClient(connection.Connection):
     def _flush_zlib(self):
         self._pending_flush = None
 
+        # Check if transport is still alive before attempting to write
+        if not self.transport or self.transport.is_closing():
+            self._writebuf = []
+            return
+
         data = bytearray(2)
         pending = False
         for line in self._writebuf:
@@ -507,7 +512,9 @@ class JsonClient(connection.Connection):
                 del data[-4:]
                 assert len(data) < 65538
                 data[0:2] = struct.pack('!H', len(data)-2)
-                self.w.write(data)
+                # Check again before writing
+                if self.transport and not self.transport.is_closing():
+                    self.w.write(data)
                 del data[2:]
                 pending = False
 
@@ -517,7 +524,9 @@ class JsonClient(connection.Connection):
             del data[-4:]
             assert len(data) < 65538
             data[0:2] = struct.pack('!H', len(data)-2)
-            self.w.write(data)
+            # Check again before writing
+            if self.transport and not self.transport.is_closing():
+                self.w.write(data)
 
         self._writebuf = []
 

@@ -30,8 +30,11 @@ from mlat import kalman, config
 import logging
 glogger = logging.getLogger("tracker")
 
-FORCE_MLAT_INTERVAL = 600
-NO_ADSB_MLAT_SECONDS = 120
+# Time constants (seconds)
+FORCE_MLAT_INTERVAL = 600    # 10 minutes - force MLAT even with ADS-B
+NO_ADSB_MLAT_SECONDS = 120   # 2 minutes - enable MLAT when no ADS-B
+KALMAN_RESET_THRESHOLD = 300 # 5 minutes - reset Kalman filter
+ALTITUDE_VRATE_TIMEOUT = 60  # 1 minute - altitude/vrate data timeout
 
 class TrackedAircraft(object):
     """A single tracked aircraft."""

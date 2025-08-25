@@ -31,7 +31,7 @@ def loop_handle_exception(loop, context):
         logging.exception("asyncio loop exception")
     else:
         msg = context["message"]
-        logging.warn(f"Caught exception: {msg}")
+        logging.warning(f"Caught exception: {msg}")
 
 mainLoop = uvloop.new_event_loop()
 mainLoop.set_exception_handler(loop_handle_exception)

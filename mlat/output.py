@@ -34,7 +34,8 @@ Various output methods for multilateration results.
 
 
 def format_time(timestamp):
-    return time.strftime("%H:%M:%S", time.gmtime(timestamp)) + ".{0:03.0f}".format(math.modf(timestamp)[0] * 1000)
+    milliseconds = int(math.modf(timestamp)[0] * 1000)
+    return time.strftime("%H:%M:%S", time.gmtime(timestamp)) + f".{milliseconds:03d}"
 
 
 def format_date(timestamp):
@@ -157,7 +158,13 @@ class BasestationClient(object):
 
     TEMPLATE = 'MSG,{mtype},1,1,{addr:06X},1,{rcv_date},{rcv_time},{now_date},{now_time},{callsign},{altitude},{speed},{heading},{lat},{lon},{vrate},{squawk},{fs},{emerg},{ident},{aog}\n'  # noqa
 
-    def __init__(self, reader, writer, *, coordinator, use_kalman_data, heartbeat_interval=30.0):
+    # Constants
+    DEFAULT_HEARTBEAT_INTERVAL = 30.0
+    CRAPPY_OUTPUT_THRESHOLD = 60   # seconds
+    CRAPPY_OUTPUT_RECENT = 30      # seconds
+    RECONNECT_INTERVAL = 30.0      # seconds
+
+    def __init__(self, reader, writer, *, coordinator, use_kalman_data, heartbeat_interval=DEFAULT_HEARTBEAT_INTERVAL):
         peer = writer.get_extra_info('peername')
         self.host = peer[0]
         self.port = peer[1]
@@ -229,11 +236,11 @@ class BasestationClient(object):
 
             if self.use_kalman_data:
                 if not kalman_data.valid and dof < 1:
-                    if receive_timestamp - ac.last_crappy_output > 60:
+                    if receive_timestamp - ac.last_crappy_output > self.CRAPPY_OUTPUT_THRESHOLD:
                         # ignore the first crappy output
                         ac.last_crappy_output = receive_timestamp - 1
                         return
-                    if receive_timestamp - ac.last_crappy_output > 30 or receive_timestamp == ac.last_crappy_output:
+                    if receive_timestamp - ac.last_crappy_output > self.CRAPPY_OUTPUT_RECENT or receive_timestamp == ac.last_crappy_output:
                         ac.last_crappy_output = receive_timestamp
                     else:
                         return
@@ -307,4 +314,4 @@ def make_basestation_connector(host, port, coordinator, use_kalman_data):
     factory = functools.partial(BasestationClient,
                                 coordinator=coordinator,
                                 use_kalman_data=use_kalman_data)
-    return net.MonitoringConnector(host, port, 30.0, factory)
+    return net.MonitoringConnector(host, port, BasestationClient.RECONNECT_INTERVAL, factory)

@@ -326,7 +326,7 @@ class MlatTracker(object):
                 if False and elapsed > 30 and error < 1e9:
                     lat, lon, alt = geodesy.ecef2llh(ecef)
                     ecef, ecef_cov = r
-                    glogger.warn('{a:06X} {e:8.1f} {lat:7.3f},{lon:7.3f},{alt:5.0f} '.format(a=decoded.address, e=error/1000, lat=lat, lon=lon, alt=alt) + str([line[0].user for line in cluster]))
+                    glogger.warning(f'{decoded.address:06X} {error/1000:8.1f} {lat:7.3f},{lon:7.3f},{alt:5.0f} ' + str([line[0].user for line in cluster]))
 
                 if error > max_error:
                     continue

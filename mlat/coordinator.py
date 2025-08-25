@@ -38,6 +38,12 @@ from mlat import tracker, clocktrack, mlattrack, util, config
 glogger = logging.getLogger("coordinator")
 random.seed()
 
+# Time constants (seconds)
+STALE_AIRCRAFT_THRESHOLD = 600  # 10 minutes
+CLOCK_JUMP_THRESHOLD = 30       # 30 seconds
+PROFILE_WRITE_INTERVAL = 60     # 1 minute
+MAX_UID_COUNTER = 4611686018427387904  # 2^62
+
 
 class Receiver(object):
     """Represents a particular connected receiver and the associated
@@ -135,7 +141,7 @@ class Receiver(object):
             self.recent_pair_jumps = 0
             self.clock_reset('sync detected clock jump')
             if self.focus:
-                glogger.warning("{r}: detected clockjump, bad_syncs: {b}".format(r=self.user, b=round(self.bad_syncs, 1)))
+                glogger.warning(f"{self.user}: detected clockjump, bad_syncs: {round(self.bad_syncs, 1)}")
             self.bad_syncs += 0.1
 
     def clock_reset(self, reason):
@@ -146,7 +152,7 @@ class Receiver(object):
         if self.focus:
             if not reason:
                 reason = ''
-            glogger.warning("Clock reset: {r} count: {c} reason: {s}".format(r=self.user, c=self.clock_reset_counter, s=reason))
+            glogger.warning(f"Clock reset: {self.user} count: {self.clock_reset_counter} reason: {reason}")
 
     @profile.trackcpu
     def refresh_traffic_requests(self):
@@ -316,7 +322,7 @@ class Coordinator(object):
                     s['heading'] = round(ac.kalman.heading, 0)
                     s['speed'] = round(ac.kalman.ground_speed, 0)
 
-            if elapsed_seen > 600:
+            if elapsed_seen > STALE_AIRCRAFT_THRESHOLD:
                 s['tracking_receivers'] = [receiver.uid for receiver in ac.tracking]
 
             if ac.sync_interest:
@@ -552,7 +558,7 @@ class Coordinator(object):
 
     async def write_profile(self):
         while True:
-            await asyncio.sleep(60.0)
+            await asyncio.sleep(PROFILE_WRITE_INTERVAL)
 
             try:
                 with closing(open(self.work_dir + '/cpuprofile.txt', 'w')) as f:
@@ -578,7 +584,7 @@ class Coordinator(object):
         if user in self.usernames:
             raise ValueError('User {user} is already connected'.format(user=user))
 
-        if self.uidCounter > 4611686018427387904:
+        if self.uidCounter > MAX_UID_COUNTER:
             self.uidCounter = 0
         uid = self.uidCounter
         while uid in self.receivers:

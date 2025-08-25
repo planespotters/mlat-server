@@ -228,7 +228,7 @@ class MlatServer(object):
         return subtasks
 
     def stop(self, msg):
-        logging.warn(msg)
+        logging.warning(msg)
         self.loop.stop()
 
     def run(self):
@@ -258,7 +258,7 @@ class MlatServer(object):
 
         self.loop.run_forever()  # Well, until stop() is called anyway!
 
-        logging.warn("Server shutting down.")
+        logging.warning("Server shutting down.")
 
         # Stop everything
         for t in reversed(subtasks):
@@ -272,4 +272,4 @@ class MlatServer(object):
                 logging.error("Exception thrown during shutdown", exc_info=(type(e), e, e.__traceback__))
 
         self.loop.close()
-        logging.warn("Server shutdown done.")
+        logging.warning("Server shutdown done.")

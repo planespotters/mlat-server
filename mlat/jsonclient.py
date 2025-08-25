@@ -152,8 +152,7 @@ class PackedMlatServerProtocol(asyncio.DatagramProtocol):
                     sync_handler(et, ot, em, om)
 
                 else:
-                    glogger.warn("bad UDP packet from {host}:{port}".format(host=addr[0],
-                                                                            port=addr[1]))
+                    glogger.warning(f"bad UDP packet from {addr[0]}:{addr[1]}")
                     break
         except struct.error:
             pass
@@ -162,8 +161,26 @@ class PackedMlatServerProtocol(asyncio.DatagramProtocol):
 
 
 class JsonClient(connection.Connection):
+    # Network timeouts
     write_heartbeat_interval = 30.0
     read_heartbeat_interval = 150.0
+    
+    # Protocol limits
+    MAX_COMPRESSION_CHUNK = 32768
+    MAX_PACKET_SIZE = 65538
+    MAX_LINE_LENGTH = 1024
+    MAX_USERNAME_LENGTH = 40
+    MIN_USERNAME_LENGTH = 3
+    HANDSHAKE_TIMEOUT = 15.0
+    
+    # Compression settings
+    ZLIB_COMPRESSION_LEVEL = 1
+    ZLIB_SYNC_TRAILER = b'\x00\x00\xff\xff'
+    PACKET_HEADER_SIZE = 2
+    
+    # Rate limiting
+    DECOMPRESSION_SLEEP = 0.1
+    MAX_DECOMPRESSION_CHUNK = 65536
 
     def __init__(self, reader, writer, *, coordinator, motd, udp_protocol, udp_host, udp_port):
         self.r = reader
@@ -190,8 +207,7 @@ class JsonClient(connection.Connection):
         self.udp_port = udp_port
 
         self.logger = util.TaggingLogger(glogger,
-                                         {'tag': '{host}:{port}'.format(host=self.host,
-                                                                        port=self.port)})
+                                         {'tag': f'{self.host}:{self.port}'})
 
         self.receiver = None
 
@@ -206,7 +222,7 @@ class JsonClient(connection.Connection):
             ('none', self.handle_line_messages, self.write_raw)
         )
         self._last_message_time = None
-        self._compressor = zlib.compressobj(1)
+        self._compressor = zlib.compressobj(self.ZLIB_COMPRESSION_LEVEL)
         self._decompressor = zlib.decompressobj()
         self._pending_flush = None
         self._writebuf = []
@@ -220,9 +236,6 @@ class JsonClient(connection.Connection):
         # start
         self._read_task = asyncio.ensure_future(self.handle_connection())
 
-    #def __del__(self):
-    #    self.logger.warning("Deleted: ({conn_info})".format(conn_info=self.receiver.connection_info))
-    # handy for checking that receiver objects get cleaned up
 
     def close(self):
         if not self.transport:
@@ -237,7 +250,7 @@ class JsonClient(connection.Connection):
         # tell the coordinator, this might cause traffic to be suppressed
         # from other receivers
         if self.receiver is not None:
-            self.logger.warning("Disconnected: ({conn_info})".format(conn_info=self.receiver.connection_info))
+            self.logger.warning(f"Disconnected: ({self.receiver.connection_info})")
             self.coordinator.receiver_disconnect(self.receiver)
 
         if self._read_task is not None:
@@ -272,7 +285,7 @@ class JsonClient(connection.Connection):
             # if we have seen no activity recently, declare the
             # connection dead and close it down
             if (time.time() - self._last_message_time) > self.read_heartbeat_interval:
-                self.logger.warn("No recent messages seen, closing connection")
+                self.logger.warning("No recent messages seen, closing connection")
                 self.close()
                 return
 
@@ -290,7 +303,6 @@ class JsonClient(connection.Connection):
         This coroutine's task is stashed as self.read_task; cancelling this
         task will cause the client connection to be closed and cleaned up."""
 
-        #self.logger.info("Accepted new client connection")
 
         try:
             await self.process_handshake()
@@ -320,14 +332,14 @@ class JsonClient(connection.Connection):
     async def process_handshake(self):
         deny = None
 
-        rawline = await asyncio.wait_for(self.r.readline(), timeout=15.0)
+        rawline = await asyncio.wait_for(self.r.readline(), timeout=self.HANDSHAKE_TIMEOUT)
         try:
             line = rawline.decode('ascii')
             if line.startswith('PROXY '):
                 proxyLine = line.split(' ')
                 self.source_ip = proxyLine[2]
                 self.source_port = proxyLine[4]
-                rawline = await asyncio.wait_for(self.r.readline(), timeout=15.0)
+                rawline = await asyncio.wait_for(self.r.readline(), timeout=self.HANDSHAKE_TIMEOUT)
                 line = rawline.decode('ascii')
 
             hs = ujson.loads(line)
@@ -345,17 +357,17 @@ class JsonClient(connection.Connection):
 
                 # replace bad characters with an underscore
                 user = re.sub("[^A-Za-z0-9_.-]", r'_', user)
-                # limit to 40 chars
-                if len(user) > 40:
-                    user = user[:40]
-                if len(user) < 3:
+                # limit to MAX_USERNAME_LENGTH chars
+                if len(user) > self.MAX_USERNAME_LENGTH:
+                    user = user[:self.MAX_USERNAME_LENGTH]
+                if len(user) < self.MIN_USERNAME_LENGTH:
                     user = user + '_' + str(random.randrange(10,99))
 
                 if user in self.coordinator.usernames:
                     existingReceiver = self.coordinator.usernames[user]
 
                     if uuid and uuid == existingReceiver.uuid:
-                        # if we have another user with the same uuid, disconnect the existing user
+                                    # if we have another user with the same uuid, disconnect the existing user
                         existingReceiver.connection.close()
                     else:
                         tries = 1000
@@ -383,7 +395,7 @@ class JsonClient(connection.Connection):
                 if lon < -180 or lon > 360:
                     raise ValueError('invalid longitude, should be -180 .. 360')
                 if lon > 180:
-                    lon = lon - 180
+                    lon -= 360
 
                 alt = float(hs['alt'])
                 if alt < -1000 or alt > 10000:
@@ -407,13 +419,7 @@ class JsonClient(connection.Connection):
 
                 self.use_udp = (self.udp_protocol is not None and hs.get('udp_transport', 0) == 2)
 
-                conn_info = '{user} v{v} {clock_type} {cversion} {udp} {compress}'.format(
-                    user=user,
-                    v=hs['version'],
-                    cversion=hs.get("client_version", "unknown"),
-                    udp="udp" if self.use_udp else "tcp",
-                    clock_type=clock_type,
-                    compress=self.compress)
+                conn_info = f'{user} v{hs["version"]} {clock_type} {hs.get("client_version", "unknown")} {"udp" if self.use_udp else "tcp"} {self.compress}'
                 self.receiver = self.coordinator.new_receiver(connection=self,
                                                               uuid=uuid,
                                                               user=user,
@@ -423,10 +429,7 @@ class JsonClient(connection.Connection):
                                                               privacy=bool(hs.get('privacy', False)),
                                                               connection_info=conn_info)
 
-                # disabled until I get to the bottom of the odd timestamps
-                #if False and self.receiver.clock.epoch == 'gps_midnight':
-                #    self.process_mlat = self.process_mlat_gps
-                #else:
+                # Use non-GPS timestamp processing
                 self.process_mlat = self.process_mlat_nongps
 
             except KeyError as e:
@@ -471,25 +474,21 @@ class JsonClient(connection.Connection):
         strange = ''
         if clock_type != 'dump1090' and clock_type != 'radarcape_gps':
             strange = 'strange clock: '
-        self.logger.warning("Handshake successful ({conn_info})".format(conn_info=conn_info))
-        self.logger = util.TaggingLogger(glogger, {'tag': '{user}'.format(user=user)})
+        self.logger.warning(f"Handshake successful ({conn_info})")
+        self.logger = util.TaggingLogger(glogger, {'tag': f'{user}'})
         return True
 
     def write_raw(self, **kwargs):
         line = ujson.dumps(kwargs)
-        #logging.info("%s <<  %s", self.receiver.user, line)
         self.w.write((line + '\n').encode('ascii'))
 
     def write_zlib(self, **kwargs):
         line = ujson.dumps(kwargs)
-        #logging.info("%s <<Z %s", self.receiver.user, line)
         self._writebuf.append(line + '\n')
         if self._pending_flush is None:
             self._pending_flush = self.loop.call_later(1.0, self._flush_zlib)
 
     def discard(self, **kwargs):
-        #line = ujson.dumps(kwargs)
-        #logging.info("%s <<D %s", self.receiver.user, line)
         pass
 
     def _flush_zlib(self):
@@ -500,27 +499,27 @@ class JsonClient(connection.Connection):
             self._writebuf = []
             return
 
-        data = bytearray(2)
+        data = bytearray(self.PACKET_HEADER_SIZE)
         pending = False
         for line in self._writebuf:
             data += self._compressor.compress(line.encode('ascii'))
             pending = True
 
-            if len(data) >= 32768:
+            if len(data) >= self.MAX_COMPRESSION_CHUNK:
                 data += self._compressor.flush(zlib.Z_SYNC_FLUSH)
-                #assert data[-4:] == b'\x00\x00\xff\xff'
+                #assert data[-4:] == self.ZLIB_SYNC_TRAILER
                 del data[-4:]
-                assert len(data) < 65538
+                assert len(data) < self.MAX_PACKET_SIZE
                 data[0:2] = struct.pack('!H', len(data)-2)
                 # Check again before writing
                 if self.transport and not self.transport.is_closing():
                     self.w.write(data)
-                del data[2:]
+                del data[self.PACKET_HEADER_SIZE:]
                 pending = False
 
         if pending:
             data += self._compressor.flush(zlib.Z_SYNC_FLUSH)
-            #assert data[-4:] == b'\x00\x00\xff\xff'
+            #assert data[-4:] == self.ZLIB_SYNC_TRAILER
             del data[-4:]
             assert len(data) < 65538
             data[0:2] = struct.pack('!H', len(data)-2)
@@ -545,7 +544,7 @@ class JsonClient(connection.Connection):
             hlen, = struct.unpack('!H', header)
 
             packet = (await self.r.readexactly(hlen))
-            packet += b'\x00\x00\xff\xff'
+            packet += self.ZLIB_SYNC_TRAILER
 
             self._last_message_time = time.time()
 
@@ -554,7 +553,7 @@ class JsonClient(connection.Connection):
             while True:
                 # limit decompression to 64k at a time
                 if packet:
-                    decompressed = self._decompressor.decompress(packet, 65536)
+                    decompressed = self._decompressor.decompress(packet, self.MAX_DECOMPRESSION_CHUNK)
                     if not decompressed:
                         raise ValueError('Decompressor made no progress')
                     packet = self._decompressor.unconsumed_tail
@@ -567,12 +566,12 @@ class JsonClient(connection.Connection):
                     self.process_message(line)
 
                 linebuf = lines[-1]
-                if len(linebuf) > 1024:
+                if len(linebuf) > self.MAX_LINE_LENGTH:
                     raise ValueError('Client sent a very long line')
 
                 if packet:
                     # try to mitigate DoS attacks that send highly compressible data
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(self.DECOMPRESSION_SLEEP)
 
             if self._decompressor.unused_data:
                 raise ValueError('Client sent a packet that had trailing uncompressed data')
@@ -583,7 +582,7 @@ class JsonClient(connection.Connection):
         try:
             msg = ujson.loads(line)
         except ValueError:
-            logging.warn("process_message json ValueError: %s >> %s", self.receiver.user, line)
+            logging.warning("process_message json ValueError: %s >> %s", self.receiver.user, line)
 
 
         self.message_counter += 1
@@ -601,7 +600,6 @@ class JsonClient(connection.Connection):
             if self.receiver.bad_syncs > 0 or now - self.receiver.last_sync > 20:
                 return
             mlat = msg['mlat']
-            #self.process_mlat(float(mlat['t']), bytes.fromhex(mlat['m']), now)
             self.coordinator.receiver_mlat(self.receiver, float(mlat['t']), bytes.fromhex(mlat['m']), now)
         elif 'seen' in msg:
             self.process_seen_message(msg['seen'])
@@ -720,11 +718,11 @@ class JsonClient(connection.Connection):
 
         start_sending = self._wanted_traffic.difference(self._requested_traffic)
         if start_sending:
-            self.send(start_sending=['{0:06x}'.format(i) for i in start_sending])
+            self.send(start_sending=[f'{i:06x}' for i in start_sending])
 
         stop_sending = self._requested_traffic.difference(self._wanted_traffic)
         if stop_sending:
-            self.send(stop_sending=['{0:06x}'.format(i) for i in stop_sending])
+            self.send(stop_sending=[f'{i:06x}' for i in stop_sending])
 
         self._requested_traffic = set(self._wanted_traffic)
 
@@ -753,7 +751,7 @@ class JsonClient(connection.Connection):
         squawk = ac.squawk
 
         result = {'@': round(receive_timestamp, 3),
-                          'addr': '{0:06x}'.format(address),
+                          'addr': f'{address:06x}',
                           'lat': round(lat, 5),
                           'lon': round(lon, 5),
                           'alt': round(alt * constants.MTOF, 0),
@@ -776,7 +774,7 @@ class JsonClient(connection.Connection):
             return
 
         result = {'@': round(receive_timestamp, 3),
-                  'addr': '{0:06x}'.format(address),
+                  'addr': f'{address:06x}',
                   'n': len(receivers),
                   'nd': distinct}
         if ecef_cov is not None:

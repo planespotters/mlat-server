@@ -101,6 +101,9 @@ class Receiver(object):
 
         self.focus = False
 
+        # Geographic clusters this receiver belongs to (populated by ClockTracker)
+        self.clusters = set()
+
         self.coordinator.receiver_location_update(self, position_llh)
 
     def update_interest_sets(self, new_sync, new_mlat, new_adsb):
@@ -551,6 +554,15 @@ class Coordinator(object):
             try:
                 self._write_state()
                 self.clock_tracker.clear_all_sync_points()
+
+                # Recompute cluster centers and log statistics
+                self.clock_tracker.cluster_manager.recompute_all_clusters()
+                cluster_stats = self.clock_tracker.cluster_manager.get_statistics()
+                glogger.info(f"Clusters: {cluster_stats['num_clusters']}, "
+                           f"Avg size: {cluster_stats['avg_cluster_size']:.1f}, "
+                           f"Min: {cluster_stats['min_cluster_size']}, "
+                           f"Max: {cluster_stats['max_cluster_size']}")
+
             except Exception:
                 glogger.exception("Failed to write state files")
 
@@ -608,6 +620,10 @@ class Coordinator(object):
         self.usernames[receiver.user] = receiver
         if receiver.user.startswith(config.DEBUG_FOCUS):
             receiver.focus = True
+
+        # Assign receiver to geographic cluster(s)
+        self.clock_tracker.receiver_connect(receiver)
+
         return receiver
 
     def _compute_interstation_distances(self, receiver):

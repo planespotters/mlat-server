@@ -12,7 +12,8 @@ for f in removeFiles:
 extensions = [
     Extension("modes_cython.message", ["modes_cython/message.pyx"]),
     Extension("mlat.geodesy", ["mlat/geodesy.pyx"]),
-    Extension("mlat.clocktrack", ["mlat/clocktrack.pyx"])
+    Extension("mlat.clocktrack", ["mlat/clocktrack.pyx"]),
+    Extension("mlat.geoclustering", ["mlat/geoclustering.pyx"])
 ]
 setup(
         ext_modules = cythonize(

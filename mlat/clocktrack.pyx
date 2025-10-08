@@ -48,6 +48,9 @@ import pygraph.algorithms.minmax
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse.csgraph import minimum_spanning_tree
+
+# Geographic clustering for optimized receiver sync
+from mlat.geoclustering import ReceiverClusterManager
 import numpy as np
 
 
@@ -235,6 +238,9 @@ class ClockTracker(object):
         self.coordinator = coordinator
         self.loop = loop
 
+        # Geographic clustering for optimized sync
+        self.cluster_manager = ReceiverClusterManager(cluster_threshold=500e3)
+
         # schedule periodic cleanup
         self.loop.call_later(1.0, self._cleanup)
 
@@ -272,6 +278,14 @@ class ClockTracker(object):
             if k[0] is receiver or k[1] is receiver:
                 pairing.reset_offsets()
 
+    def receiver_connect(self, receiver):
+        """
+        Called by the coordinator when a receiver connects.
+        Assigns the receiver to appropriate geographic cluster(s).
+        """
+        clusters = self.cluster_manager.add_receiver(receiver)
+        glogger.info(f"{receiver.user} assigned to {len(clusters)} cluster(s)")
+
     @profile.trackcpu
     def receiver_disconnect(self, receiver):
         """
@@ -294,6 +308,9 @@ class ClockTracker(object):
                 k[0].sync_peers[pairing.cat] -= 1
                 k[1].sync_peers[pairing.cat] -= 1
                 del self.clock_pairs[k]
+
+        # Remove from geographic clusters
+        self.cluster_manager.remove_receiver(receiver)
 
     @profile.trackcpu
     def receiver_sync(self, receiver,

@@ -30,6 +30,7 @@ import time
 import numpy
 import math
 from contextlib import closing
+from concurrent.futures import ThreadPoolExecutor
 
 import traceback
 
@@ -55,7 +56,8 @@ class Cohort:
         self.groups = []
         self.handle = loop.call_later(config.MLAT_DELAY, self._process)
     def _process(self):
-        [ group.handle(group) for group in self.groups ]
+        for group in self.groups:
+            asyncio.ensure_future(group.handle(group))
 
 class MlatTracker(object):
     def __init__(self, coordinator, blacklist_filename=None, pseudorange_filename=None):
@@ -75,6 +77,11 @@ class MlatTracker(object):
         if self.pseudorange_filename:
             self.reopen_pseudoranges()
             self.coordinator.add_sighup_handler(self.reopen_pseudoranges)
+
+        # Thread pool for CPU-intensive solver work to utilize multiple cores
+        import os
+        max_workers = int(os.environ.get('MLAT_SOLVER_THREADS', 2))
+        self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix='mlat-solver')
 
     def read_blacklist(self):
         s = set()
@@ -124,7 +131,7 @@ class MlatTracker(object):
         group.copies.append((receiver, timestamp, now))
 
     @profile.trackcpu
-    def _resolve(self, group):
+    async def _resolve(self, group):
         del self.pending[group.message]
 
 
@@ -306,7 +313,12 @@ class MlatTracker(object):
                 initial_guess = cluster[0][0].position
 
             self.coordinator.stats_solve_attempt += 1
-            r = solver.solve(cluster, altitude, altitude_error, initial_guess)
+            # Run CPU-intensive solver in thread pool to avoid blocking event loop
+            r = await self.loop.run_in_executor(
+                self.executor,
+                solver.solve,
+                cluster, altitude, altitude_error, initial_guess
+            )
 
             if r:
                 # estimate the error

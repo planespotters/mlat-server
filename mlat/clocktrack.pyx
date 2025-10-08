@@ -251,7 +251,13 @@ class ClockTracker(object):
         self.loop = loop
 
         # Geographic clustering for optimized sync
-        self.cluster_manager = ReceiverClusterManager(cluster_threshold=500e3)
+        # Thresholds come from config so deployments can tune behaviour.
+        self.cluster_manager = ReceiverClusterManager(
+            cluster_threshold=config.CLUSTER_PRIMARY_THRESHOLD,
+            soft_threshold=config.CLUSTER_SOFT_THRESHOLD,
+            soft_cluster_limit=config.CLUSTER_SOFT_CLUSTER_LIMIT,
+            max_clusters_per_receiver=config.CLUSTER_MAX_ASSIGNMENTS
+        )
 
         # schedule periodic cleanup
         self.loop.call_later(1.0, self._cleanup)

@@ -99,14 +99,27 @@ cdef class ReceiverClusterManager:
     cdef public dict receiver_to_clusters
     cdef public int next_cluster_id
     cdef public double cluster_threshold
+    cdef public double soft_threshold
     cdef public double cluster_buffer
+    cdef public int soft_cluster_limit
+    cdef public int max_clusters_per_receiver
 
-    def __init__(self, double cluster_threshold=500e3):
+    def __init__(self,
+                 double cluster_threshold=250e3,
+                 double soft_threshold=350e3,
+                 int soft_cluster_limit=24,
+                 int max_clusters_per_receiver=3):
         self.clusters = []
         self.receiver_to_clusters = {}
         self.next_cluster_id = 0
         self.cluster_threshold = cluster_threshold
+        # ensure soft threshold is not smaller than primary threshold
+        if soft_threshold < cluster_threshold:
+            soft_threshold = cluster_threshold
+        self.soft_threshold = soft_threshold
         self.cluster_buffer = 100e3  # 100km buffer for cluster edge receivers
+        self.soft_cluster_limit = soft_cluster_limit
+        self.max_clusters_per_receiver = max(1, max_clusters_per_receiver)
 
     def add_receiver(self, receiver):
         """Add receiver to appropriate cluster(s) or create new cluster
@@ -114,15 +127,28 @@ cdef class ReceiverClusterManager:
         Returns list of clusters the receiver was assigned to.
         """
         cdef list assigned_clusters = []
+        cdef list candidate_clusters = []
         cdef object receiver_pos = receiver.position
         cdef double distance
+        cdef int cluster_size
 
         # Find all clusters within threshold
         for cluster in self.clusters:
             distance = geodesy.ecef_distance(receiver_pos, cluster.center_ecef)
             if distance < self.cluster_threshold:
+                candidate_clusters.append((distance, cluster))
+            elif distance < self.soft_threshold:
+                cluster_size = len(cluster.receivers)
+                if cluster_size <= self.soft_cluster_limit:
+                    candidate_clusters.append((distance, cluster))
+
+        if candidate_clusters:
+            candidate_clusters.sort(key=lambda item: item[0])
+            for _, cluster in candidate_clusters:
                 cluster.add_receiver(receiver)
                 assigned_clusters.append(cluster)
+                if len(assigned_clusters) >= self.max_clusters_per_receiver:
+                    break
 
         # If not assigned to any cluster, create a new one
         if not assigned_clusters:

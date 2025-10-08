@@ -27,6 +27,6 @@ if __name__ == '__main__':
                         datefmt='%Y%m%d %H:%M:%S')
 
     for h in logging.getLogger().handlers:
-        h.setLevel(logging.WARNING)
+        h.setLevel(logging.INFO)
 
     mlat.main.MlatServer().run()

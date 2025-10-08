@@ -64,5 +64,11 @@ MAX_GROUP = 15
 
 DEBUG_FOCUS='euerdorf'
 
+# Geographic clustering configuration (metres)
+CLUSTER_PRIMARY_THRESHOLD = 250e3       # strict assignment radius
+CLUSTER_SOFT_THRESHOLD = 350e3          # allow small, sparse clusters a wider net
+CLUSTER_SOFT_CLUSTER_LIMIT = 24         # only join far clusters if they are small
+CLUSTER_MAX_ASSIGNMENTS = 3             # max clusters any receiver can join
+
 if 'AGPL_SERVER_CODE_URL' not in globals():
     raise RuntimeError('Please update AGPL_SERVER_CODE_URL in mlat/server/config.py')

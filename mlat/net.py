@@ -63,21 +63,24 @@ class MonitoringListener(object):
                     self.start_client,
                     host=None,  # None enables dual-stack on most systems
                     port=self.port,
-                    family=socket.AF_UNSPEC
+                    family=socket.AF_UNSPEC,
+                    backlog=4096
                 )
             except (OSError, socket.gaierror):
                 # Fallback to IPv4 only if dual-stack fails
                 self.tcp_server = await asyncio.start_server(
                     self.start_client,
                     host='0.0.0.0',
-                    port=self.port
+                    port=self.port,
+                    backlog=4096
                 )
         else:
             # Specific host provided - use as-is
             self.tcp_server = await asyncio.start_server(
                 self.start_client,
                 host=self.host,
-                port=self.port
+                port=self.port,
+                backlog=4096
             )
             
         for s in self.tcp_server.sockets:

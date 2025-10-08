@@ -29,6 +29,7 @@ import operator
 import time
 import numpy
 import math
+import os
 from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 
@@ -78,10 +79,17 @@ class MlatTracker(object):
             self.reopen_pseudoranges()
             self.coordinator.add_sighup_handler(self.reopen_pseudoranges)
 
-        # Thread pool for CPU-intensive solver work to utilize multiple cores
-        import os
-        max_workers = int(os.environ.get('MLAT_SOLVER_THREADS', 2))
-        self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix='mlat-solver')
+        # Thread pools for CPU-intensive work to utilize multiple cores
+        solver_workers = int(os.environ.get('MLAT_SOLVER_THREADS', 2))
+        self.solver_executor = ThreadPoolExecutor(
+            max_workers=solver_workers,
+            thread_name_prefix='mlat-solver'
+        )
+        normalize_workers = int(os.environ.get('MLAT_NORMALIZE_THREADS', solver_workers))
+        self.normalize_executor = ThreadPoolExecutor(
+            max_workers=normalize_workers,
+            thread_name_prefix='mlat-normalize'
+        )
 
     def read_blacklist(self):
         s = set()
@@ -256,10 +264,20 @@ class MlatTracker(object):
 
         # normalize timestamps. This returns a list of timestamp maps;
         # within each map, the timestamp values are comparable to each other.
+        snapshot_now, receivers, predictor_snapshot = self.clock_tracker.snapshot_predictors(timestamp_map.keys())
+        if len(receivers) < 2 or len(predictor_snapshot) < 2:
+            return
+
         try:
-            components = clocktrack.normalize2(clocktracker=self.clock_tracker,
-                                             timestamp_map=timestamp_map)
-        except Exception as e:
+            components = await self.loop.run_in_executor(
+                self.normalize_executor,
+                clocktrack.normalize2_from_snapshot,
+                timestamp_map,
+                receivers,
+                predictor_snapshot,
+                snapshot_now
+            )
+        except Exception:
             traceback.print_exc()
             return
 
@@ -315,7 +333,7 @@ class MlatTracker(object):
             self.coordinator.stats_solve_attempt += 1
             # Run CPU-intensive solver in thread pool to avoid blocking event loop
             r = await self.loop.run_in_executor(
-                self.executor,
+                self.solver_executor,
                 solver.solve,
                 cluster, altitude, altitude_error, initial_guess
             )

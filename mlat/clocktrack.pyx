@@ -535,6 +535,36 @@ class ClockTracker(object):
         """
         self.sync_points.clear()
 
+    def snapshot_predictors(self, receivers):
+        """
+        Capture a snapshot of predictor state for the given receivers.
+
+        Returns (now, sorted_receivers, predictor_snapshot) where
+        predictor_snapshot maps (receiver_low, receiver_high) -> state tuple.
+        """
+        cdef list receiver_list = list(receivers)
+        receiver_list.sort()
+
+        cdef dict snapshot = {}
+        cdef double now = time.time()
+        cdef int i, j, count = len(receiver_list)
+        cdef object si, sj
+        cdef ClockPairing pairing
+        cdef object state
+
+        for i in range(count):
+            si = receiver_list[i]
+            for j in range(i + 1, count):
+                sj = receiver_list[j]
+                pairing = self.clock_pairs.get((si, sj))
+                if pairing is None:
+                    continue
+                state = pairing.export_predictor_state(now)
+                if state is not None:
+                    snapshot[(si, sj)] = state
+
+        return now, receiver_list, snapshot
+
     @profile.trackcpu
     def _cleanup_syncpointlist(self, key):
         """Expire a syncpoint list. This happens ~3 seconds after the first copy
@@ -1045,6 +1075,22 @@ cdef class ClockPairing(object):
 
         return self.base_avg + (peer_ts - self.peer_avg) * self.i_factor
 
+    cpdef object export_predictor_state(self, double now):
+        """
+        Snapshot predictor parameters for asynchronous normalization work.
+        Returns None if the pairing is currently unusable.
+        """
+        if not self.check_valid(now):
+            return None
+
+        return (self.variance,
+                self.updated,
+                self.n,
+                self.base_avg,
+                self.peer_avg,
+                self.i_factor,
+                self.factor)
+
     def __str__(self):
         return self.base.user + ':' + self.peer.user
 
@@ -1301,6 +1347,86 @@ class _my_component(object):
         self.size = size
 
 
+cdef list _normalize_components(dict timestamp_map, list receivers,
+                                dict predictor_map, list row, list col,
+                                list data, int reclen):
+    if len(data) < 2:
+        return []
+
+    cm = csr_matrix(
+        (np.array(data, dtype=np.float64),
+         (np.array(row, dtype=np.int32), np.array(col, dtype=np.int32))),
+        shape=(reclen, reclen))
+
+    mst = minimum_spanning_tree(csgraph=cm, overwrite=True)
+
+    n_components, labels = connected_components(csgraph=mst, directed=False, return_labels=True)
+
+    comps = {}
+    for label in labels:
+        if label not in comps:
+            comps[label] = (_my_component(label=label, receivers=[], size=0))
+
+    index = 0
+    for label in labels:
+        comps[label].size += 1
+        comps[label].receivers.append(receivers[index])
+        index += 1
+
+    comps = list(comps.values())
+    comps.sort(key=lambda x: x.size, reverse=True)
+
+    if not comps:
+        return []
+
+    bigComp = comps[0]
+    if bigComp.size < 3:
+        return []
+
+    roots = [bigComp.receivers[0]]
+
+    g = pygraph.classes.graph.graph()
+    g.add_nodes(bigComp.receivers)
+
+    coo = mst.tocoo(copy=False)
+    for idx in range(len(coo.data)):
+        weight = coo.data[idx]
+        si = receivers[coo.row[idx]]
+        sj = receivers[coo.col[idx]]
+        if si in bigComp.receivers:
+            g.add_edge((si, sj), wt=weight)
+
+    resultComponents = []
+    for root in roots:
+        heights = {}
+        _label_heights(g, root, heights)
+
+        tall1 = _tallest_branch(g, root, heights)
+        tall2 = _tallest_branch(g, root, heights, ignore=tall1[1])
+
+        target = (tall1[0] + tall2[0]) / 2
+        central = root
+        step = tall1[1]
+        while step and abs(heights[central] - target) > abs(heights[step] - target):
+            central = step
+            _, step = _tallest_branch(g, central, heights, ignore=central)
+
+        results = {}
+
+        factor = 1 / central.clock.freq
+        variance = central.clock.jitter**2
+        source_ref = 0
+        target_ref = 0
+        conversion_chain = [_Predictor(target_ref, source_ref, factor, variance)]
+
+        _convert_timestamps(g, timestamp_map, predictor_map, central, results,
+                            conversion_chain, central.clock.jitter**2)
+
+        resultComponents.append(results)
+
+    return resultComponents
+
+
 @profile.trackcpu
 def normalize2(clocktracker, timestamp_map):
     """
@@ -1335,10 +1461,6 @@ def normalize2(clocktracker, timestamp_map):
     receivers = list(timestamp_map.keys())
     receivers.sort() # to get a matrix with only entries above the diagonal when doing si < sj
 
-    # populate initial graph
-    g = pygraph.classes.graph.graph()
-    g.add_nodes(receivers)
-
     # build a weighted graph where edges represent usable clock
     # synchronization paths, and the weight of each edge represents
     # the estimated variance introducted by converting a timestamp
@@ -1349,127 +1471,81 @@ def normalize2(clocktracker, timestamp_map):
 
     cdef double now = time.time()
 
-    reclen = len(receivers)
-    predictor_count = 0
     predictor_map = {}
 
-    row = []
-    col = []
-    data = []
-    ri = 0
-    for si in receivers:
-        ci = 0
-        for sj in receivers:
+    cdef int reclen = len(receivers)
+    cdef list row = []
+    cdef list col = []
+    cdef list data = []
+    cdef int ri
+    cdef int ci
+    cdef object si, sj
+    cdef object predictors
+
+    for ri, si in enumerate(receivers):
+        for ci, sj in enumerate(receivers):
             if si < sj:
                 predictors = _make_predictors(clocktracker.clock_pairs, si, sj, now)
                 if predictors:
                     predictor_map[(si, sj)] = predictors[0]
                     predictor_map[(sj, si)] = predictors[1]
-                    g.add_edge((si, sj), wt=predictors[0].variance)
-                    predictor_count += 1
                     data.append(predictors[0].variance)
                     row.append(ri)
                     col.append(ci)
-            ci += 1
-        ri += 1
 
-    if predictor_count < 2:
-        return []
+    return _normalize_components(timestamp_map, receivers, predictor_map, row, col, data, reclen)
 
-    cm = csr_matrix((np.array(data), (np.array(row), np.array(col))), shape=(reclen, reclen))
 
-    #for row in cm.toarray():
-    #    print(row)
+@profile.trackcpu
+def normalize2_from_snapshot(timestamp_map, receivers, predictor_snapshot, double snapshot_now):
+    """
+    Run normalization using a precomputed predictor snapshot. Intended for use
+    from worker threads to avoid touching shared ClockPairing state.
+    """
+    cdef list receiver_list = list(receivers)
+    cdef int reclen = len(receiver_list)
+    cdef dict predictor_map = {}
+    cdef list row = []
+    cdef list col = []
+    cdef list data = []
+    cdef int i, j
+    cdef object si, sj
+    cdef object state
+    cdef double variance
+    cdef double updated
+    cdef int n
+    cdef double base_avg
+    cdef double peer_avg
+    cdef double i_factor
+    cdef double factor
 
-    mst = minimum_spanning_tree(csgraph=cm, overwrite=True)
+    for i in range(reclen):
+        si = receiver_list[i]
+        for j in range(i + 1, reclen):
+            sj = receiver_list[j]
+            state = predictor_snapshot.get((si, sj))
+            if state is None:
+                continue
 
-    n_components, labels = connected_components(csgraph=mst, directed=False, return_labels=True)
-    #print('labels: ' + str(labels))
+            variance = state[0]
+            if variance <= 0:
+                continue
 
-    comps = {}
-    for label in labels:
-        if label not in comps:
-            comps[label] = (_my_component(label=label, receivers=[], size=0))
+            updated = state[1]
+            n = <int>state[2]
+            base_avg = state[3]
+            peer_avg = state[4]
+            i_factor = state[5]
+            factor = state[6]
 
-    index = 0
-    for label in labels:
-        comps[label].size += 1 # increment component size
-        comps[label].receivers.append(receivers[index])
-        index += 1
+            variance = variance * (1.0 + (snapshot_now - updated) / 60.0)
+            if n < 10:
+                variance *= 1 + (10 - n) * 0.05
 
-    # make our dict a list so we can sort it
-    comps = list(comps.values())
-    comps.sort(key=lambda x: x.size, reverse=True)
+            predictor_map[(si, sj)] = _Predictor(peer_avg, base_avg, factor, variance)
+            predictor_map[(sj, si)] = _Predictor(base_avg, peer_avg, i_factor, variance)
+            data.append(variance)
+            row.append(i)
+            col.append(j)
 
-    if len(comps) == 0:
-        return [] # no results, return empty list
-
-    bigComp = comps[0] # biggest component
-    roots = [bigComp.receivers[0]] # let's just stay with a list for a moment ... doesn't hurt even if we only do one entry
-    #print(bigComp.size)
-
-    if bigComp.size < 3:
-        return [] # too small, don't continue
-
-    # rebuild the graph with only the spanning edges, retaining weights
-    g = pygraph.classes.graph.graph()
-    g.add_nodes(bigComp.receivers)
-
-    coo = mst.tocoo(copy=False)
-    for index in range(len(coo.data)):
-        weight = coo.data[index]
-        si = receivers[coo.row[index]]
-        sj = receivers[coo.col[index]]
-        if si in bigComp.receivers:
-            if si < sj:
-                edge = (si,sj)
-            else:
-                edge = (sj,si)
-            #g.add_edge((si, sj), wt=predictor_map[edge].variance)
-            g.add_edge((si, sj), wt=weight)
-
-    # for each spanning tree, find a central node and convert timestamps
-    # actually we're only searching the biggest spanning tree now
-    resultComponents = []
-    for root in roots:
-        # label heights of nodes, where the height of a node is
-        # the length of the most expensive path to a child of the node
-        heights = {}
-        _label_heights(g, root, heights)
-
-        # Find the longest path in the spanning tree; we want to
-        # resolve starting at the center of this path, as this minimizes
-        # the maximum path length to any node
-
-        # find the two tallest branches leading from the root
-        tall1 = _tallest_branch(g, root, heights)
-        tall2 = _tallest_branch(g, root, heights, ignore=tall1[1])
-
-        # Longest path is TALL1 - ROOT - TALL2
-        # We want to move along the path into TALL1 until the distances to the two
-        # tips of the path are equal length. This is the same as finding a node on
-        # the path within TALL1 with a height of about half the longest path.
-        target = (tall1[0] + tall2[0]) / 2
-        central = root
-        step = tall1[1]
-        while step and abs(heights[central] - target) > abs(heights[step] - target):
-            central = step
-            _, step = _tallest_branch(g, central, heights, ignore=central)
-
-        # Convert timestamps so they are using the clock units of "central"
-        # by walking the spanning tree edges. Then finally convert to wallclock
-        # times as the last step by dividing by the final clock's frequency
-        results = {}
-
-        factor = 1 / central.clock.freq
-        variance = central.clock.jitter**2
-        source_ref = 0
-        target_ref = 0
-        conversion_chain = [_Predictor(target_ref, source_ref, factor, variance)]
-
-        _convert_timestamps(g, timestamp_map, predictor_map, central, results,
-                            conversion_chain, central.clock.jitter**2)
-
-        resultComponents.append(results)
-
-    return resultComponents
+    return _normalize_components(timestamp_map, receiver_list, predictor_map, row, col, data, reclen)

@@ -313,8 +313,8 @@ class JsonClient(connection.Connection):
 
             await self.handle_messages()
 
-        except asyncio.IncompleteReadError:
-            self.logger.info('Client EOF')
+        except asyncio.IncompleteReadError as e:
+            self.logger.warning(f'Client EOF (client closed connection): {e}')
 
         except asyncio.TimeoutError:
             self.logger.info('Client handshake timeout')
@@ -323,7 +323,7 @@ class JsonClient(connection.Connection):
             pass
 
         except ConnectionError as e:
-            self.logger.warning(str(e))
+            self.logger.warning(f'Connection error: {e}')
 
         except Exception:
             self.logger.exception('Exception handling client')
@@ -488,8 +488,18 @@ class JsonClient(connection.Connection):
     def write_zlib(self, **kwargs):
         line = ujson.dumps(kwargs)
         self._writebuf.append(line + '\n')
+
+        # Flush heartbeats immediately to prevent client timeouts during high CPU load
+        is_heartbeat = 'heartbeat' in kwargs
+        flush_delay = 0.0 if is_heartbeat else 1.0
+
         if self._pending_flush is None:
-            self._pending_flush = self.loop.call_later(1.0, self._flush_zlib)
+            self._pending_flush = self.loop.call_later(flush_delay, self._flush_zlib)
+        elif is_heartbeat:
+            # Cancel pending flush and flush immediately
+            self._pending_flush.cancel()
+            self._pending_flush = None
+            self._flush_zlib()
 
     def discard(self, **kwargs):
         pass
@@ -586,7 +596,7 @@ class JsonClient(connection.Connection):
             msg = ujson.loads(line)
         except ValueError:
             logging.warning("process_message json ValueError: %s >> %s", self.receiver.user, line)
-
+            return
 
         self.message_counter += 1
         if 'sync' in msg:

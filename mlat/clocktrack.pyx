@@ -154,8 +154,20 @@ cdef _add_to_existing_syncpoint(dict clock_pairs, SyncPoint syncpoint, r0, doubl
     cdef dict distances = r0.distance
     cdef ClockPairing pairing
 
+    # OPTIMIZATION: Only sync with receivers in nearby clusters
+    # Get clusters for r0
+    r0_clusters = getattr(r0, 'clusters', set())
+
     for r1l in syncpoint.receivers:
         r1 = r1l.receiver
+
+        # Skip if r1 is not in any of r0's clusters (i.e., too far away)
+        if r0_clusters:
+            r1_clusters = getattr(r1, 'clusters', set())
+            if r1_clusters and not r0_clusters.intersection(r1_clusters):
+                # No shared clusters = too far apart (>500km)
+                continue
+
         td1B = r1l.td
         i1 = r1l.i
 

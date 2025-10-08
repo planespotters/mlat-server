@@ -759,9 +759,9 @@ class JsonClient(connection.Connection):
             return
 
         lat, lon, alt = geodesy.ecef2llh(ecef)
-        ac = self.coordinator.tracker.aircraft[address]
-        callsign = ac.callsign
-        squawk = ac.squawk
+        ac = self.coordinator.tracker.aircraft.get(address)
+        callsign = ac.callsign if ac else None
+        squawk = ac.squawk if ac else None
 
         result = {'@': round(receive_timestamp, 3),
                           'addr': f'{address:06x}',
@@ -808,8 +808,8 @@ class JsonClient(connection.Connection):
             result['nsvel'] = round(math.cos(math.radians(heading)) * speed, 1)
             result['ewvel'] = round(math.sin(math.radians(heading)) * speed, 1)
 
-        ac = self.coordinator.tracker.aircraft[address]
-        if ac.vrate_time and receive_timestamp - ac.vrate_time < 5:
+        ac = self.coordinator.tracker.aircraft.get(address)
+        if ac and ac.vrate_time and receive_timestamp - ac.vrate_time < 5:
             result['vrate'] = ac.vrate
 
 

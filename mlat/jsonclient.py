@@ -164,14 +164,14 @@ class JsonClient(connection.Connection):
     # Network timeouts
     write_heartbeat_interval = 30.0
     read_heartbeat_interval = 150.0
-    
+
     # Protocol limits
     MAX_COMPRESSION_CHUNK = 32768
     MAX_PACKET_SIZE = 65538
     MAX_LINE_LENGTH = 1024
     MAX_USERNAME_LENGTH = 40
     MIN_USERNAME_LENGTH = 3
-    HANDSHAKE_TIMEOUT = 15.0
+    HANDSHAKE_TIMEOUT = 10.0  # Reduced from 15s to clean up slow/dead connections faster
     
     # Compression settings
     ZLIB_COMPRESSION_LEVEL = 1
@@ -196,11 +196,38 @@ class JsonClient(connection.Connection):
 
         self.transport = writer.transport
         peer = self.transport.get_extra_info('peername')
+
+        # Handle case where peername is None (connection already closed or invalid)
+        if peer is None:
+            temp_logger = util.TaggingLogger(glogger, {'tag': 'unknown:0'})
+            temp_logger.warning('Client connection failed: unable to get peer information')
+            # Close the writer before raising exception
+            writer.close()
+            raise ConnectionError('Unable to get peer information')
+
         self.host = peer[0]
         self.port = peer[1]
 
         self.source_ip = peer[0]
         self.source_port = str(peer[1])
+
+        # Enable TCP keepalive to detect dead connections faster
+        try:
+            sock = self.transport.get_extra_info('socket')
+            if sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                # Start probes after 60 seconds of idle
+                if hasattr(socket, 'TCP_KEEPIDLE'):
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+                # Send probes every 30 seconds
+                if hasattr(socket, 'TCP_KEEPINTVL'):
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30)
+                # Close after 3 failed probes (90s total)
+                if hasattr(socket, 'TCP_KEEPCNT'):
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        except (OSError, AttributeError) as e:
+            # Log but don't fail if keepalive setup fails
+            glogger.debug(f'Could not set TCP keepalive for {self.host}:{self.port}: {e}')
 
         self.udp_protocol = udp_protocol
         self.udp_host = udp_host

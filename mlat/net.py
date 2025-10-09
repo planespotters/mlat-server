@@ -56,6 +56,7 @@ class MonitoringListener(object):
 
     async def _start(self):
         # Support dual-stack (IPv4 + IPv6) binding
+        # Increased backlog to 16384 to handle connection bursts and high client counts
         if self.host is None or self.host == '' or self.host == '0.0.0.0':
             # Bind to all interfaces - try dual-stack first, fallback to IPv4 only
             try:
@@ -64,7 +65,7 @@ class MonitoringListener(object):
                     host=None,  # None enables dual-stack on most systems
                     port=self.port,
                     family=socket.AF_UNSPEC,
-                    backlog=4096
+                    backlog=16384
                 )
             except (OSError, socket.gaierror):
                 # Fallback to IPv4 only if dual-stack fails
@@ -72,7 +73,7 @@ class MonitoringListener(object):
                     self.start_client,
                     host='0.0.0.0',
                     port=self.port,
-                    backlog=4096
+                    backlog=16384
                 )
         else:
             # Specific host provided - use as-is
@@ -80,7 +81,7 @@ class MonitoringListener(object):
                 self.start_client,
                 host=self.host,
                 port=self.port,
-                backlog=4096
+                backlog=16384
             )
             
         for s in self.tcp_server.sockets:

@@ -201,8 +201,10 @@ class JsonClient(connection.Connection):
         if peer is None:
             temp_logger = util.TaggingLogger(glogger, {'tag': 'unknown:0'})
             temp_logger.warning('Client connection failed: unable to get peer information')
-            # Close the writer before raising exception
+            # Close the writer before raising exception - schedule async close
             writer.close()
+            # Create a task to properly wait for close (will run in background)
+            asyncio.ensure_future(self._wait_writer_close(writer))
             raise ConnectionError('Unable to get peer information')
 
         self.host = peer[0]
@@ -289,8 +291,42 @@ class JsonClient(connection.Connection):
         if self._pending_traffic_update is not None:
             self._pending_traffic_update.cancel()
 
-        self.transport.close()
+        # Properly close the writer to avoid CLOSE-WAIT connections
+        # Try to drain pending writes first, then close
+        try:
+            if self.w and not self.transport.is_closing():
+                # Schedule drain and close as a task to avoid blocking
+                asyncio.ensure_future(self._async_close_writer())
+            else:
+                self.transport.close()
+        except Exception:
+            # Fallback to direct close if async close fails
+            self.transport.close()
+
         self.transport = None
+
+    async def _async_close_writer(self):
+        """Async helper to properly drain and close the writer"""
+        try:
+            # Flush any pending data
+            await self.w.drain()
+        except Exception:
+            pass  # Ignore drain errors (connection may already be dead)
+        finally:
+            # Close and wait for the connection to fully close
+            self.w.close()
+            try:
+                await self.w.wait_closed()
+            except Exception:
+                pass  # Ignore wait_closed errors
+
+    @staticmethod
+    async def _wait_writer_close(writer):
+        """Static helper to wait for writer to close (used in early error handling)"""
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass  # Ignore errors during cleanup
 
     async def wait_closed(self):
         await util.safe_wait([self._read_task, self._heartbeat_task])

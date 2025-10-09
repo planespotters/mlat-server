@@ -190,8 +190,21 @@ class BasestationClient(object):
         self.logger.info("Connection lost")
         self.coordinator.remove_output_handler(self.write_result)
         self.heartbeat_task.cancel()
-        self.writer.close()
+
+        # Properly close the writer to avoid CLOSE-WAIT connections
+        writer_to_close = self.writer
         self.writer = None
+        writer_to_close.close()
+        # Schedule async wait for close to complete
+        asyncio.ensure_future(self._async_wait_close(writer_to_close))
+
+    @staticmethod
+    async def _async_wait_close(writer):
+        """Static helper to wait for writer to fully close"""
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass  # Ignore errors during cleanup
 
     async def wait_closed(self):
         await util.safe_wait([self.heartbeat_task, self.reader_task])

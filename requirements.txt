@@ -1,7 +1,11 @@
-numpy
-scipy
-pykalman
-python-graph-core
-uvloop
-ujson
-Cython
+Cython==3.3.0
+numpy==2.5.4
+packaging==26.3
+pykalman==0.11.2
+python-graph-core==1.8.2
+scikit-base==0.13.2
+scipy==1.18.1
+# python-graph-core imports pkg_resources, which setuptools 81+ removes
+setuptools==80.10.2
+ujson==6.0.0
+uvloop==0.23.0

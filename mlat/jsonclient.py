@@ -175,6 +175,13 @@ class JsonClient(connection.Connection):
     
     # Compression settings
     ZLIB_COMPRESSION_LEVEL = 1
+    # Server->client traffic is small JSON lines, so a 4KB window and small
+    # internal state compress fine and cut the compressor from ~262KB to ~38KB
+    # per client. Clients inflate with a default (32KB) window, which accepts
+    # any smaller window. The decompressor must stay at the default because
+    # clients compress with a 32KB window.
+    ZLIB_WINDOW_BITS = 12
+    ZLIB_MEM_LEVEL = 5
     ZLIB_SYNC_TRAILER = b'\x00\x00\xff\xff'
     PACKET_HEADER_SIZE = 2
     
@@ -251,7 +258,8 @@ class JsonClient(connection.Connection):
             ('none', self.handle_line_messages, self.write_raw)
         )
         self._last_message_time = None
-        self._compressor = zlib.compressobj(self.ZLIB_COMPRESSION_LEVEL)
+        self._compressor = zlib.compressobj(self.ZLIB_COMPRESSION_LEVEL, zlib.DEFLATED,
+                                            self.ZLIB_WINDOW_BITS, self.ZLIB_MEM_LEVEL)
         self._decompressor = zlib.decompressobj()
         self._pending_flush = None
         self._writebuf = []

@@ -35,6 +35,7 @@ FORCE_MLAT_INTERVAL = 600    # 10 minutes - force MLAT even with ADS-B
 NO_ADSB_MLAT_SECONDS = 120   # 2 minutes - enable MLAT when no ADS-B
 KALMAN_RESET_THRESHOLD = 300 # 5 minutes - reset Kalman filter
 ALTITUDE_VRATE_TIMEOUT = 60  # 1 minute - altitude/vrate data timeout
+MLAT_WANTED_INTERVAL = 1.0   # seconds between rebuilds of the mlat_wanted set
 
 class TrackedAircraft(object):
     """A single tracked aircraft."""
@@ -191,7 +192,7 @@ class Tracker(object):
         new_adsb = set()
         now = time.time()
 
-        if now - self.mlat_wanted_ts > 0.1:
+        if now - self.mlat_wanted_ts > MLAT_WANTED_INTERVAL:
             self.mlat_wanted = set()
             for ac in self.aircraft.values():
                 since_force = now - ac.last_force_mlat

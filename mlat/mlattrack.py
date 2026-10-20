@@ -58,7 +58,7 @@ class Cohort:
         self.handle = loop.call_later(config.MLAT_DELAY, self._process)
     def _process(self):
         for group in self.groups:
-            asyncio.ensure_future(group.handle(group))
+            group.handle(group)
 
 class MlatTracker(object):
     def __init__(self, coordinator, blacklist_filename=None, pseudorange_filename=None):
@@ -120,7 +120,7 @@ class MlatTracker(object):
         group = self.pending.get(message)
         if not group:
             group = self.pending[message] = MessageGroup(message=message, first_seen=now)
-            group.handle = self._resolve
+            group.handle = self._dispatch
             if now - self.cohort.creationTime > 0.05 or self.cohort.len > 25:
                 # create new cohort
                 self.cohort = Cohort(now, self.loop)
@@ -138,14 +138,18 @@ class MlatTracker(object):
 
         group.copies.append((receiver, timestamp, now))
 
+    def _dispatch(self, group):
+        # Groups with fewer than 3 copies can't be solved; drop them here
+        # rather than creating an asyncio task just to discard them.
+        if len(group.copies) < 3:
+            del self.pending[group.message]
+            return
+
+        asyncio.ensure_future(self._resolve(group))
+
     @profile.trackcpu
     async def _resolve(self, group):
         del self.pending[group.message]
-
-
-        # less than 3 messages -> no go
-        if len(group.copies) < 3:
-            return
 
         decoded = modes_cython.message.decode(group.message)
 

@@ -29,6 +29,32 @@ from mlat import util
 
 glogger = logging.getLogger("net")
 
+# Keep the accept queue short. Clients give up after 60s without a response;
+# a deep FIFO queue means that by the time a connection is accepted under load,
+# the client is already gone and the handshake work is wasted. A short queue
+# makes the kernel drop excess SYNs instead, so clients retry and connections
+# that do get accepted are still fresh.
+LISTEN_BACKLOG = 1024
+
+TCP_ESTABLISHED = 1
+
+
+def peer_gone(transport):
+    """True if the kernel says the peer has already closed (or reset) this
+    connection, e.g. because it sat in the accept queue past the client's
+    timeout. Linux only; returns False if the state can't be determined."""
+    if not hasattr(socket, 'TCP_INFO'):
+        return False
+    sock = transport.get_extra_info('socket')
+    if sock is None:
+        return False
+    try:
+        # first byte of struct tcp_info is tcpi_state
+        state = sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_INFO, 1)[0]
+    except (OSError, AttributeError):
+        return False
+    return state != TCP_ESTABLISHED
+
 
 class MonitoringListener(object):
     def __init__(self, host, port, factory, logger=glogger, description=None):
@@ -56,7 +82,6 @@ class MonitoringListener(object):
 
     async def _start(self):
         # Support dual-stack (IPv4 + IPv6) binding
-        # Increased backlog to 16384 to handle connection bursts and high client counts
         if self.host is None or self.host == '' or self.host == '0.0.0.0':
             # Bind to all interfaces - try dual-stack first, fallback to IPv4 only
             try:
@@ -65,7 +90,7 @@ class MonitoringListener(object):
                     host=None,  # None enables dual-stack on most systems
                     port=self.port,
                     family=socket.AF_UNSPEC,
-                    backlog=16384
+                    backlog=LISTEN_BACKLOG
                 )
             except (OSError, socket.gaierror):
                 # Fallback to IPv4 only if dual-stack fails
@@ -73,7 +98,7 @@ class MonitoringListener(object):
                     self.start_client,
                     host='0.0.0.0',
                     port=self.port,
-                    backlog=16384
+                    backlog=LISTEN_BACKLOG
                 )
         else:
             # Specific host provided - use as-is
@@ -81,7 +106,7 @@ class MonitoringListener(object):
                 self.start_client,
                 host=self.host,
                 port=self.port,
-                backlog=16384
+                backlog=LISTEN_BACKLOG
             )
             
         for s in self.tcp_server.sockets:
@@ -102,6 +127,10 @@ class MonitoringListener(object):
     # shouldn't need modifying:
 
     def start_client(self, r, w):
+        if peer_gone(w.transport):
+            w.transport.abort()
+            return
+
         try:
             newclient = self._new_client(r, w)
             self.clients.append(newclient)

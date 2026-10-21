@@ -169,7 +169,7 @@ class Receiver(object):
         return self.user
 
     def __repr__(self):
-        return 'Receiver({0!r},{0!r},{1!r})@{2}'.format(self.uid,
+        return 'Receiver({0!r},{1!r},{2!r})@{3}'.format(self.uid,
                                                         self.user,
                                                         self.connection,
                                                         id(self))

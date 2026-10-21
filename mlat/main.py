@@ -31,7 +31,7 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 from mlat import util
 asyncio.set_event_loop(util.mainLoop)
 
-from mlat import jsonclient, output, coordinator
+from mlat import jsonclient, output, coordinator, capture
 
 def hostport(s):
     parts = s.split(':')
@@ -96,6 +96,7 @@ class MlatServer(object):
     def __init__(self):
         self.loop = util.mainLoop
         self.coordinator = None
+        self.capture = None
 
     def add_client_args(self, parser):
         parser.add_argument('--client-listen',
@@ -148,6 +149,14 @@ class MlatServer(object):
 
         parser.add_argument('--dump-pseudorange',
                             help="dump pseudorange data in json format to a file")
+
+        parser.add_argument('--capture',
+                            help="record all client input to a file for later replay (strftime placeholders allowed, .gz to compress)")
+
+        parser.add_argument('--capture-duration',
+                            help="stop capturing after this many seconds, 0 for no limit, default 3600",
+                            type=float,
+                            default=3600)
 
         parser.add_argument('--partition',
                             help="enable partitioning (n/count)",
@@ -219,6 +228,9 @@ class MlatServer(object):
     def make_util_subtasks(self, args):
         subtasks = []
 
+        if self.capture:
+            subtasks.append(self.capture)
+
         if args.check_leaks:
             from mlat import leakcheck
             import tracemalloc
@@ -235,12 +247,18 @@ class MlatServer(object):
         args = self.make_arg_parser().parse_args()
         asyncio.set_event_loop(self.loop)
 
+        if args.capture:
+            self.capture = capture.Capture(filename=args.capture,
+                                           duration=args.capture_duration,
+                                           loop=self.loop)
+
         self.coordinator = coordinator.Coordinator(work_dir=args.work_dir,
                                                    loop=self.loop,
                                                    pseudorange_filename=args.dump_pseudorange,
                                                    partition=args.partition,
                                                    tag=args.tag,
-                                                   status_interval=args.status_interval)
+                                                   status_interval=args.status_interval,
+                                                   capture=self.capture)
 
         subtasks = ([self.coordinator] +
                 self.make_util_subtasks(args) +

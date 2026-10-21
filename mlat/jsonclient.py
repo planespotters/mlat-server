@@ -62,6 +62,7 @@ class JsonClientListener(net.MonitoringListener):
                                                                            family=socket.AF_INET,
                                                                            local_addr=(bind_address, self.udp_port))
             self.udp_transport, self.udp_protocol = (await dgram_coro)
+            self.udp_protocol.capture = self.coordinator.capture
             name = self.udp_transport.get_extra_info('sockname')
             self.logger.warning("{what} listening on {host}:{port} (UDP)".format(host=name[0],
                                                                               port=name[1],
@@ -102,6 +103,7 @@ class PackedMlatServerProtocol(asyncio.DatagramProtocol):
         self.clients = {}
         self._r = random.SystemRandom()
         self.listen_address = None
+        self.capture = None
 
     def add_client(self, sync_handler, mlat_handler):
         newkey = self._r.getrandbits(32)
@@ -121,6 +123,8 @@ class PackedMlatServerProtocol(asyncio.DatagramProtocol):
             key, seq, base = self.STRUCT_HEADER.unpack_from(data, 0)
             sync_handler, mlat_handler = self.clients[key]  # KeyError on bad client key
             utc = time.time()
+            if self.capture is not None:
+                self.capture.udp(key, data)
 
             i = self.STRUCT_HEADER.size
             while i < len(data):
@@ -270,6 +274,9 @@ class JsonClient(connection.Connection):
         self.message_counter = 0
         self.return_stats = False
 
+        self.capture = coordinator.capture
+        self._capture_id = self.capture.new_connection() if self.capture else None
+
         # start
         self._read_task = asyncio.ensure_future(self.handle_connection())
 
@@ -283,6 +290,9 @@ class JsonClient(connection.Connection):
 
         if self._udp_key is not None:
             self.udp_protocol.remove_client(self._udp_key)
+
+        if self._capture_id is not None:
+            self.capture.disconnected(self._capture_id, self._udp_key)
 
         # tell the coordinator, this might cause traffic to be suppressed
         # from other receivers
@@ -417,6 +427,9 @@ class JsonClient(connection.Connection):
                 rawline = await asyncio.wait_for(self.r.readline(), timeout=self.HANDSHAKE_TIMEOUT)
                 line = rawline.decode('ascii')
 
+            if self._capture_id is not None:
+                self.capture.handshake(self._capture_id, line)
+
             hs = ujson.loads(line)
         except ValueError as e:
             deny = 'Badly formatted handshake: ' + str(e)
@@ -515,6 +528,8 @@ class JsonClient(connection.Connection):
 
         if deny:
             self.logger.warning('Handshake failed: %s', deny)
+            if self._capture_id is not None:
+                self.capture.denied(self._capture_id, deny)
             self.write_raw(deny=[deny], reconnect_in=util.fuzzy(900))
             return False
 
@@ -544,6 +559,9 @@ class JsonClient(connection.Connection):
             response['udp_transport'] = (self.udp_host,
                                          self.udp_port,
                                          self._udp_key)
+
+        if self._capture_id is not None:
+            self.capture.accepted(self._capture_id, user, self._udp_key)
 
         self.write_raw(**response)
         strange = ''
@@ -664,6 +682,9 @@ class JsonClient(connection.Connection):
                 raise ValueError('Client sent a packet that was not newline terminated')
 
     def process_message(self, line):
+        if self._capture_id is not None:
+            self.capture.message(self._capture_id, line)
+
         try:
             msg = ujson.loads(line)
         except ValueError:

@@ -97,6 +97,20 @@ to hack on the code.
 
     $ mlat-server --help
 
+## Capturing client input
+
+`--capture FILE` records every client handshake, message and UDP datagram
+with its arrival time, so the traffic can be replayed into a server later.
+The format is documented in `mlat/capture.py`. Capture starts with the server,
+so all client handshakes are included, and stops after `--capture-duration`
+seconds (default 3600, 0 for no limit). The filename may contain strftime
+placeholders; an existing file is never overwritten. Use a `.gz` suffix to
+compress.
+
+    $ mlat-server ... --capture /var/tmp/mlat-capture-%Y%m%d-%H%M%S.tsv.gz
+
+The capture contains receiver usernames and positions, so treat it as private data.
+
 ## Clients
 
 You need a bunch of receivers running mlat-client:
